@@ -1,0 +1,14 @@
+[
+  {
+    "amount": 45.0,
+    "category": "food",
+    "description": "almuerzo",
+    "date": "2026-06-02"
+  },
+  {
+    "amount": 20.0,
+    "category": "transport",
+    "description": "Gasto en Uber",
+    "date": "2026-06-02"
+  }
+]

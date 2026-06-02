@@ -2,7 +2,6 @@ from pydantic import BaseModel, Field
 from datetime import date
 from typing import Optional
 
-from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 
@@ -43,18 +42,18 @@ class ExtractionResult(BaseModel):
     return not self.success
   
 EXTRACTION_PROMPT = ChatPromptTemplate.from_messages([
-  {
+  (
     "system",
     """You are an expense extraction assistant.
     Your only job is to extract expense data from the user message.
     Today's date is {today}
     If the message is a question or does not mention an expense,
     set is_expense to false and use 0 for amount."""
-  },
-  {
+  ),
+  (
     "human",
     "{message}"
-  }
+  )
 ])
 
 def extract(message: str) -> ExtractionResult:
@@ -79,4 +78,4 @@ def extract(message: str) -> ExtractionResult:
 
     return ExtractionResult(success=True, expense=expense)
   except Exception as e:
-    return ExtractionResult(success=False, error=str(0))
+    return ExtractionResult(success=False, error=str(e))

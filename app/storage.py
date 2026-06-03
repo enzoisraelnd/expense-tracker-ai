@@ -1,51 +1,102 @@
-import json
-from pathlib import Path
-from datetime import date
+import os
+import psycopg2
+from psycopg2.extras import RealDictCursor
+from dotenv import load_dotenv
+from typing import Optional
+
+load_dotenv()  
 from app.extractor import ExtractedExpense
 
-STORAGE_FILE = Path("data/expenses.json")
-
-def _ensure_file():
-  """Creates the file and folder if they don't exist."""
-  STORAGE_FILE.parent.mkdir(exist_ok=True)
-  if not STORAGE_FILE.exists():
-    STORAGE_FILE.write_text("[]")
-    
-def save_expense(expense: ExtractedExpense):
-  """Appends an expense to the JSON file."""
-  _ensure_file()
-  
-  expenses = _load_all()
-  expenses.append({
-    "amount": expense.amount,
-    "category": expense.category,
-    "description": expense.description,
-    "date": expense.expense_date.isoformat(),
-  })
-  
-  STORAGE_FILE.write_text(
-    json.dumps(expenses, indent=2, ensure_ascii=False)
+def _get_connection():
+  """Creates a new Postgres connection from environment variables."""
+  return psycopg2.connect(
+    host=os.getenv("POSTGRES_HOST", "localhost"),
+    port=os.getenv("POSTGRES_PORT", 5432),
+    user=os.getenv("POSTGRES_USER"),
+    password=os.getenv("POSTGRES_PASSWORD"),
+    dbname=os.getenv("POSTGRES_DB"),
   )
-  
+
+def save_expense(expense: ExtractedExpense):
+  """Insert an expense into Postgres."""
+  conn = _get_connection()
+  try:
+    with conn.cursor() as cur:
+      cur.execute("""
+        INSERT INTO expenses (amount, category, description, expense_date)
+                VALUES (%s, %s, %s, %s)
+        """, (
+          expense.amount,
+          expense.category,
+          expense.description,
+          expense.expense_date,
+      ))
+    conn.commit()
+  finally:
+    conn.close()
+
 def get_total() -> float:
   """Returns the sum of all expenses."""
-  _ensure_file()
-  return sum(e["amount"] for e in _load_all())
+  conn = _get_connection()
+  try:
+    with conn.cursor() as cur:
+      cur.execute("SELECT COALESCE(SUM(amount), 0) FROM expenses")
+      return float(cur.fetchone()[0])
+  finally:
+    conn.close()
 
 def get_by_category() -> dict:
-  """Returns total grouped by category."""
-  _ensure_file()
-  totals: dict = {}
-  for e in _load_all():
-    cat = e["category"]
-    totals[cat] = totals.get(cat, 0) + e["amount"]
-  return totals
-  
-def _load_all() -> list:
-  return json.loads(STORAGE_FILE.read_text())
+  """Returns totals grouped by category."""
+  conn = _get_connection()
+  try:
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute("""
+            SELECT category, SUM(amount) as total
+            FROM expenses
+            GROUP BY category
+            ORDER BY total DESC
+        """)
+        return {row["category"]: float(row["total"]) for row in cur.fetchall()}
+  finally:
+    conn.close()
 
 def reset_expenses():
-  """Deltes all stored expenses."""
-  _ensure_file()
-  STORAGE_FILE.write_text("[]")
-  
+  """Deletes all stored expenses."""
+  conn = _get_connection()
+  try:
+    with conn.cursor() as cur:
+      cur.execute("DELETE FROM expenses")
+    conn.commit()
+  finally:
+    conn.close()
+
+def save_session_summary(session_id: str, summary: str):
+  """Persistes a session to Postgres."""
+  conn = _get_connection()
+  try:
+    with conn.cursor() as cur:
+      cur.execute("""
+        INSERT INTO session_summaries
+            (session_id, summary, total_amount)
+        VALUES (%s, %s, %s)
+      """, (session_id, summary))
+    conn.commit()
+  finally:
+    conn.close()
+
+def get_latest_summary(session_id: str) -> Optional[str]:
+  """Returns the most recent summary for a session."""
+  conn = _get_connection()
+  try:
+    with conn.cursor() as cur:
+      cur.execute("""
+        SELECT summary
+        FROM session_summaries
+        WHERE session_id = %s
+        ORDER BY created_at DESC
+        LIMIT 1
+      """, (session_id,))
+      row = cur.fetchone()
+      return row[0] if row else None
+  finally:
+    conn.close()

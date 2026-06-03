@@ -2,7 +2,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from app.main import chat
-from app.memory import get_session_history, clear_session
+from app.memory import get_session_history, clear_session, flush_session
 from app.storage import get_total, get_by_category, reset_expenses  
 
 SESSION_ID = "terminal-session"
@@ -31,8 +31,12 @@ def show_memory():
     print("No messages in memory.")
   else:
     for msg in messages:
-      role = "You" if msg.type == "human" else "Assistant"
-      # truncate long messages for readability
+      if msg.type == "human":
+        role = "You"
+      elif msg.type == "ai":
+        role = "Assistant"
+      else:
+        role = "Summary"        # ← system messages son resúmenes
       content = msg.content[:80] + "..." if len(msg.content) > 80 else msg.content
       print(f"  [{role}] {content}")
   print("=" * 22)
@@ -60,7 +64,12 @@ def main():
     if user_input.startswith("/"):
       cmd = user_input.lower()
       if cmd == "/quit":
-        print("Bye!")
+        print("Saving session...")
+        flushed = flush_session(SESSION_ID)
+        if flushed:
+          print("Session saved. Bye!")
+        else:
+          print("Bye!")
         break
       elif cmd == "/summary":
         show_summary()

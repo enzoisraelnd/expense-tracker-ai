@@ -9,6 +9,9 @@ from app.extractor import extract
 from app.memory import get_session_history
 from app.storage import save_expense
 
+# ── configuración ─────────────────────────────────────────────
+MAX_INPUT_CHARS = 500    # ~125 tokens, suficiente para cualquier gasto
+
 # ── modelos ───────────────────────────────────────────────────
 # modelo principal para el chat
 llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.3)
@@ -16,15 +19,29 @@ llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.3)
 # ── prompt ────────────────────────────────────────────────────
 prompt = ChatPromptTemplate.from_messages([
     (
-        "system",
-        """You are a personal expense tracking assistant.
-        Your job is to help the user register and query their expenses.
-        Be concise and friendly.
-        When confirming a registered expense, always use the
-        structured data provided in [Extracted: ...], not the
-        user's original words. For example:
-        'Registered: S/ 45.00 in food.' — not 'category almuerzo'.
-        Respond in the same language the user writes in."""
+      "system",
+      """You are a personal expense tracking assistant.
+      Your ONLY job is to help users register and query expenses.
+      You CAN:
+      - Register expenses (amounts, categories, descriptions)
+      - Answer questions about recorded expenses
+      - Show summaries and totals
+      You CANNOT:
+      - Answer questions unrelated to expenses
+      - Discuss other topics (news, general knowledge, personal advice)
+      - Remember personal information like names, ages, or preferences
+
+      If the user asks something outside your scope, respond:
+      'Solo puedo ayudarte con el registro y consulta de gastos.'
+
+      Be concise and friendly.
+
+      When confirming a registered expense, always use the
+      structured data provided in [Extracted: ...], not the
+      user's original words. For example:
+      'Registered: S/ 45.00 in food.' — not 'category almuerzo'.
+      
+      Respond in the same language the user writes in."""
     ),
     MessagesPlaceholder(variable_name="history"),
     ("human", "{input}"),
@@ -45,6 +62,12 @@ def chat(message: str, session_id: str = "default") -> str:
   Processes a user message and returns the assistant response.
   Automatically manages conversation history via session_id
   """
+  if len(message) > MAX_INPUT_CHARS:
+    return (
+        f"Tu mensaje es demasiado largo ({len(message)} caracteres). "
+        f"Por favor ingresá un máximo de {MAX_INPUT_CHARS} caracteres."
+    )
+
   # paso 1 — detectar si es un gasto
   extraction = extract(message)
   

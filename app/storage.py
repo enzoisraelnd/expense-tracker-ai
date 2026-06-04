@@ -71,16 +71,18 @@ def reset_expenses():
     conn.close()
 
 def save_session_summary(session_id: str, summary: str):
-  """Persistes a session to Postgres."""
+  """Persists a session summary to Postgres. Returns the new id."""
   conn = _get_connection()
   try:
     with conn.cursor() as cur:
       cur.execute("""
-        INSERT INTO session_summaries
-            (session_id, summary, total_amount)
-        VALUES (%s, %s, %s)
+        INSERT INTO session_summaries (session_id, summary)
+        VALUES (%s, %s)
+        RETURNING id
       """, (session_id, summary))
+      summary_id = cur.fetchone()[0]
     conn.commit()
+    return summary_id
   finally:
     conn.close()
 
@@ -98,5 +100,31 @@ def get_latest_summary(session_id: str) -> Optional[str]:
       """, (session_id,))
       row = cur.fetchone()
       return row[0] if row else None
+  finally:
+    conn.close()
+
+def get_all_summaries(session_id: str = None) -> list[dict]:
+  """
+  Returns all session summaries from Postgres.
+  Optionally filteres by session_id
+  """
+  conn = _get_connection()
+  try:
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+      if session_id:
+        cur.execute("""
+          SELECT id, session_id, summary, created_at
+          FROM session_summaries
+          WHERE session_id = %s
+          ORDER BY created_at ASC
+        """)
+      else:
+        cur.execute("""
+          SELECT id, session_id, summary, created_at
+          FROM session_summaries
+          ORDER BY created_at ASC
+        """)
+
+      return [dict(row) for row in cur.fetchall()]
   finally:
     conn.close()

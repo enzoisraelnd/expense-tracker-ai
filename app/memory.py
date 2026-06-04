@@ -161,11 +161,10 @@ def clear_session(session_id: str):
 
 def flush_session(session_id: str) -> bool:
   """
-  Persists the current summary to Postgres and clears Redis.
-  Called when the user explicitly closes the session.
-  Returns True if there was something to flush.
+  Persists summary to Postgres and Chroma, clears Redis.
   """
-  from app.storage import save_session_summary, get_total
+  from app.storage import save_session_summary
+  from app.vector_store import add_summary
 
   history = get_session_history(session_id)
   messages = history.messages
@@ -177,15 +176,21 @@ def flush_session(session_id: str) -> bool:
   if messages and messages[0].type == "system":
     summary_text = messages[0].content
   else:
-    # no hay summary aún — generar uno de los mensajes actuales
     if len(messages) < 2:
-        return False
+      return False
     summary_text = _summarize(messages)
 
   # persistir en Postgres
-  save_session_summary(
-      session_id=session_id,
-      summary=summary_text
+  summary_id  = save_session_summary(
+    session_id=session_id,
+    summary=summary_text
+  )
+
+  # embeber en Chroma
+  add_summary(
+    summary_id=summary_id,
+    session_id=session_id,
+    summary=summary_text,
   )
 
   # limpiar Redis
@@ -200,13 +205,31 @@ def get_session_history(session_id: str) -> RedisChatMessageHistory:
   # si Redis está vacío, intentar cargar el summary histórico de Postgres
   if not history.messages:
     from app.storage import get_latest_summary
+    from app.vector_store import sync_from_postgres, search_relevant_summaries
     from langchain_core.messages import SystemMessage
 
-    previous_summary = get_latest_summary(session_id)
-    if previous_summary:
-      print(f"[Memory] Loading previous summary from Postgres...")
-      history.add_message(
-        SystemMessage(content=previous_summary)
-      )
+    # 1. sincronizar Chroma con Postgres
+    sync_from_postgres()
+
+    # 2. buscar summaries relevantes en Chroma
+    # usamos un query genérico al inicio — sin mensaje del usuario aún
+    relevant = search_relevant_summaries(
+      query="expense tracking history",
+      session_id=session_id,
+    )
+
+    if relevant:
+      # combinar los summaries relevantes en uno solo
+      combined = "\n\n---\n\n".join(relevant)
+      context = f"[Relevant history from previous sessions]:\n{combined}"
+      print(f"[Memory] Loaded {len(relevant)} relevant summaries from Chroma.")
+      history.add_message(SystemMessage(content=context))
+
+    else:
+      # fallback — cargar el último summary de Postgres
+      previous_summary = get_latest_summary(session_id)
+      if previous_summary:
+        print(f"[Memory] Fallback: loading latest summary from Postgres...")
+        history.add_message(SystemMessage(content=previous_summary))
 
   return history
